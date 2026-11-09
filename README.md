@@ -169,10 +169,6 @@ Generated interactive artifacts available in the repository include:
 
 **Institution:** École Supérieure d'Ingénieurs de Beyrouth (ESIB), Université Saint-Joseph de Beyrouth
 
-This repository hosts work developed collaboratively as part of an academic engineering project. Contributions should be attributed to the original team members.
-
 ## Acknowledgements
 
 Data and supporting platforms: Copernicus Sentinel-2, NASA MODIS, USGS SRTM, ECMWF ERA5, and Google Earth Engine.
-
-**Licensing:** No repository license is asserted here. Reuse permissions should be agreed with the project contributors before adding a license file.
