@@ -1,238 +1,178 @@
-<div align="center">
-
 # ❄️ SnowFLOWS
 
-**Spatio-temporal modelling and forecasting of snow cover in Lebanon using satellite imagery**
+### Spatio-Temporal Snow Cover Forecasting in Lebanon Using Satellite Imagery and Deep Learning
 
-![Python](https://img.shields.io/badge/Python-3.9%2B-3776AB?logo=python&logoColor=white)
-![TensorFlow](https://img.shields.io/badge/TensorFlow-Keras-FF6F00?logo=tensorflow&logoColor=white)
-![Google Earth Engine](https://img.shields.io/badge/Google%20Earth%20Engine-JavaScript-4285F4?logo=google-earth&logoColor=white)
-![Status](https://img.shields.io/badge/status-in%20progress-yellow)
-![License](https://img.shields.io/badge/license-MIT-green)
-
-Multidisciplinary Project · ESIB – Université Saint-Joseph de Beyrouth
-
-</div>
-
----
-
-## Table of contents
-
-- [Overview](#overview)
-- [Pipeline](#pipeline)
-- [Repository structure](#repository-structure)
-- [Data](#data)
-- [Modelling](#modelling)
-- [Getting started](#getting-started)
-- [Results](#results)
-- [Roadmap](#roadmap)
-- [Team](#team)
-- [License](#license)
-- [Acknowledgements](#acknowledgements)
+**Tech stack:** Python · TensorFlow/Keras · scikit-learn · NumPy · pandas · Google Earth Engine · Plotly
 
 ## Overview
 
-Snow cover in the Lebanese mountains drives groundwater recharge, river discharge, agriculture and tourism, yet it varies strongly from year to year. SnowFLOWS is a pipeline that:
+Snow cover in Lebanon's mountains influences water availability, agriculture, and seasonal environmental conditions. **SnowFLOWS** investigates whether satellite-derived snow observations and meteorological variables can be used to forecast snow cover one week ahead.
 
-1. Extracts **weekly snow-covered area** from Sentinel-2 and MODIS (2016–2025) using the NDSI index in Google Earth Engine.
-2. Splits the snow signal by **altitude band** using the SRTM DEM.
-3. Adds **ERA5 temperature and precipitation**.
-4. Trains a **stacked LSTM** to forecast next-week snow surface above 1200 m.
+The project combines remote-sensing data extraction, altitude-aware time-series preprocessing, feature engineering, and a stacked Long Short-Term Memory (LSTM) neural network. The current implementation focuses on **weekly snow-cover forecasting above 1,200 m**, rather than pixel-level future snow-map generation.
 
-The longer-term goal is a spatio-temporal forecasting framework (ConvLSTM, UNet-3D, TimeSformer, generative models) with +3 / +10 / +30 day horizons and a 3D visualization. The current code covers the weekly, altitude-resolved time-series stage.
-
-## Pipeline
+## Project Pipeline
 
 ```mermaid
-flowchart LR
-    A[Sentinel-2 · GEE] --> D[Weekly snow area<br/>per altitude band]
-    B[MODIS · GEE] --> D
-    C[SRTM DEM] --> D
-    D --> F[Merged weekly dataset]
-    E[ERA5 temp / precip] --> F
-    F --> G[Preprocessing<br/>Z-score · target · split]
-    G --> H[Feature engineering<br/>20 features]
-    H --> I[8-week windows]
-    I --> J[Stacked LSTM]
-    J --> K[Snow t+1<br/>above 1200 m]
+flowchart TD
+    A[Sentinel-2 and MODIS snow observations] --> D[Weekly altitude-aware dataset]
+    B[SRTM elevation data] --> D
+    C[ERA5 temperature and precipitation] --> D
+    D --> E[Preprocessing and normalization]
+    E --> F[Temporal and snow-dynamics features]
+    F --> G[8-week input sequences]
+    G --> H[Stacked LSTM regression model]
+    H --> I[Next-week snow-cover prediction]
+    I --> J[Evaluation and interactive plots]
 ```
 
-## Repository structure
+## Data and Preprocessing
 
-Suggested layout (adjust paths if you keep everything at the root):
+**Data sources**
 
+- **Sentinel-2:** Satellite imagery used to estimate snow-covered area.
+- **MODIS:** Additional snow-cover observations for temporal comparison.
+- **SRTM DEM:** Elevation information used to analyze snow across altitude bands.
+- **ERA5:** Temperature and precipitation data used as model inputs.
+- **Google Earth Engine:** Satellite-data filtering, snow detection, and extraction.
+
+**Snow detection:** The remote-sensing workflow uses the Normalized Difference Snow Index (NDSI), with cloud masking and a threshold-based snow classification approach. Snow-cover estimates are aggregated into weekly observations and studied across altitude bands (above 1,200 m, 1,200–1,800 m, and above 1,800 m).
+
+**Feature engineering:** The sequence-generation script constructs 20 input features, including seasonal sine/cosine encoding, lagged snow observations, snow-change and gradient features, satellite snow signals, and meteorological variables. Each prediction uses **8 consecutive weeks** of inputs.
+
+## Model Architecture
+
+The main training implementation is in [`train_lstm.py`](train_lstm.py).
+
+```text
+Input sequence (8 weeks × 20 features)
+          ↓
+LSTM (96 units, return_sequences=True)
+          ↓
+Dropout (0.15)
+          ↓
+LSTM (64 units)
+          ↓
+Dropout (0.15)
+          ↓
+Dense (32, ReLU)
+          ↓
+Dense (16, ReLU)
+          ↓
+Dense (1): next-week forecast
 ```
-snowflows/
-├── data/
-│   ├── raw/
-│   │   └── Sentinel2_and_Modis_Weekly_Snow_By_Altitude_20162025_1.csv
-│   └── processed/
-│       └── weekly_snow_model_ready_with_target.csv
-├── gee/
-│   ├── Sentinel2_code.js        # weekly Sentinel-2 snow area (renamed from .txt)
-│   └── NDSI.js                  # NDSI visualization variant (renamed from .txt)
-├── src/
-│   ├── create_sequences.py      # 8-week sliding windows
-│   └── train_lstm2.py           # LSTM training and evaluation
-├── reports/
-│   ├── MDP_report_1_3.pdf
-│   ├── MDP_report_2.pdf
-│   └── MDP_SNOWFLOWS_report_3.pdf
-├── requirements.txt
-├── .gitignore
-├── LICENSE
+
+**Training configuration**
+
+| Component                         | Implementation                  |
+| --------------------------------- | ------------------------------- |
+| Framework                         | TensorFlow / Keras              |
+| Optimizer                         | Adam (learning rate: 0.0003)    |
+| Loss                              | Custom peak-weighted Huber loss |
+| Metrics                           | MAE and RMSE                    |
+| Batch size                        | 8                               |
+| Maximum training epochs in script | 150                             |
+| Learning-rate adjustment          | ReduceLROnPlateau               |
+| Temporal ordering                 | Training with `shuffle=False`   |
+
+The custom loss places greater weight on high-snow observations to address the tendency of regression models to smooth seasonal peaks. The training script also compares performance against a persistence-style baseline.
+
+## Repository Structure
+
+```text
+SnowFlows/
+├── GEE/                             # Google Earth Engine scripts
+├── MODIS-25/                        # MODIS-related materials
+├── data/                            # Supporting datasets
+├── evaluation/                      # Evaluation materials
+├── Altitude Comparison code and graph/
+├── create_sequences.py             # Feature engineering and sequence generation
+├── create_sequences_altitudes.py   # Altitude-focused sequence generation
+├── train_lstm.py                   # Primary LSTM training and evaluation
+├── train_lstm_altitudes.py         # Altitude-focused LSTM experiment
+├── splitting_data.py               # Data splitting
+├── zscore_transformation.py        # Normalization workflow
+├── target_column_added.py         # Forecast-target preparation
+├── weekly_snow_model_ready_with_target.csv
+├── X_train.npy / X_val.npy / X_test.npy
+├── y_train.npy / y_val.npy / y_test.npy
+├── loss_plot.html                   # Interactive training-loss plot
+├── mae_plot.html                    # Interactive MAE plot
+├── full_timeline_predictions.html   # Forecast timeline
+├── full_timeline_predictions_altitudes.html
 └── README.md
 ```
 
-| Item                              | Description                                                                                                 |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| `gee/Sentinel2_code.js`           | Sentinel-2 SR weekly snow area for Lebanon (Oct 2021 – Jun 2025), SCL cloud mask, NDSI > 0.4, CSV export.   |
-| `gee/NDSI.js`                     | Variant with NDSI map layers (RGB, NDSI, snow mask, winter mean) using `S2_SR_HARMONIZED`.                  |
-| `data/raw/…20162025_1.csv`        | Raw weekly dataset: Sentinel-2 and MODIS snow (km²), temperature (°C), precipitation (mm) by altitude band. |
-| `data/processed/…with_target.csv` | Model-ready dataset: Z-scored features, `split` label, next-week target. 452 rows.                          |
-| `src/create_sequences.py`         | Builds the `(samples, 8, 20)` tensors.                                                                      |
-| `src/train_lstm2.py`              | Defines, trains and evaluates the LSTM.                                                                     |
-| `reports/`                        | Project reports 1–3.                                                                                        |
+Additional scripts and intermediate datasets are available at the repository root.
 
-## Data
+## Getting Started
 
-### Sources
-
-| Source                              | Use                         | Resolution           |
-| ----------------------------------- | --------------------------- | -------------------- |
-| Sentinel-2 L2A (`COPERNICUS/S2_SR`) | Snow detection              | 10 m, ~5-day revisit |
-| MODIS snow cover                    | Snow detection, cross-check | ~500 m, daily        |
-| SRTM DEM (`USGS/SRTMGL1_003`)       | Altitude bands              | 30 m                 |
-| ERA5 reanalysis                     | Temperature, precipitation  | –                    |
-| FAO GAUL 2015 level 0               | Lebanon boundary            | –                    |
-
-### Altitude bands
-
-Every variable is computed for: **> 1200 m**, **1200 – 1800 m**, and **> 1800 m**.
-
-### Snow detection
-
-1. Filter Sentinel-2 images over Lebanon by date and cloud percentage.
-2. Mask clouds, shadows and defective pixels with the Scene Classification Layer (SCL).
-3. Compute `NDSI = (B3 − B11) / (B3 + B11)` and classify snow where **NDSI > 0.4**.
-4. Average the binary mask per week, multiply by pixel area, and sum to km².
-
-### Known limitations
-
-- Residual cloud contamination remains after SCL masking.
-- Sentinel-2 coverage is sparse in 2016–2017.
-- Earth Engine quotas required splitting the extraction into several periods, merged afterwards.
-- The two GEE scripts use different cloud-masking rules and cloud-percentage thresholds (70% vs 50%); use one consistently when re-running.
-
-### Model-ready dataset schema
-
-| Column(s)                           | Description                                                         |
-| ----------------------------------- | ------------------------------------------------------------------- |
-| `year`, `week_of_year`              | Temporal indicators                                                 |
-| `split`                             | `train` / `validation` / `test` (chronological, 316 / 68 / 68 rows) |
-| `s2_snow_*_smoothed_zscore` (×3)    | Sentinel-2 snow area per altitude band                              |
-| `modis_snow_*_smoothed_zscore` (×3) | MODIS snow area per altitude band                                   |
-| `temp_*_smoothed_zscore` (×3)       | ERA5 temperature per altitude band                                  |
-| `precip_*_smoothed_zscore` (×3)     | ERA5 precipitation per altitude band                                |
-| `target_snow_next_week`             | Sentinel-2 snow area above 1200 m at week _t+1_                     |
-
-## Modelling
-
-**Task:** one-week-ahead regression of Sentinel-2 snow surface above 1200 m.
-
-**Input:** 8 consecutive weeks × 20 features. Shapes: train `(307, 8, 20)`, validation `(68, 8, 20)`, test `(67, 8, 20)`.
-
-| Feature group               | Variables                            |
-| --------------------------- | ------------------------------------ |
-| Seasonal encoding           | `week_sin`, `week_cos`               |
-| Persistence                 | `snow_last_week`, `snow_last_2weeks` |
-| Change dynamics             | `snow_change_ratio`                  |
-| Aggregate signal            | `snow_mean`                          |
-| Derivatives                 | `snow_gradient`, `snow_acceleration` |
-| Sentinel-2 / MODIS snow     | 3 altitude bands each                |
-| Temperature / precipitation | 3 altitude bands each                |
-
-**Architecture**
-
-```
-Input (8 × 20)
- → LSTM(96) → Dropout(0.15)
- → LSTM(64) → Dropout(0.15)
- → Dense(32) → Dense(16) → Dense(1)
-```
-
-**Training**
-
-| Setting                 | Value                                                         |
-| ----------------------- | ------------------------------------------------------------- |
-| Optimizer               | Adam, lr = 3e-4                                               |
-| Batch size / max epochs | 8 / 150                                                       |
-| Shuffle                 | Off (preserves chronology)                                    |
-| Loss                    | Peak-weighted Huber, δ = 1.0, weight = 1 + 1.5·max(0, y_true) |
-| LR schedule             | `ReduceLROnPlateau` (factor 0.5, patience 6)                  |
-| Early stopping          | patience 12, restore best weights                             |
-| Metric                  | MAE                                                           |
-
-**Baseline:** persistence forecast (`snow(t+1) ≈ snow(t)`).
-
-**Design note:** configurations with the lowest MAE tended to smooth out and underestimate winter peaks. The peak-weighted Huber loss trades a slightly higher global MAE for better reproduction of seasonal maxima.
-
-## Getting started
-
-### Prerequisites
-
-- A [Google Earth Engine](https://earthengine.google.com/) account
-- Python 3.9+
+### 1. Get the project
 
 ```bash
-git clone https://github.com/<your-username>/snowflows.git
-cd snowflows
-python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+git clone https://github.com/noursag/SnowFlows.git
+cd SnowFlows
 ```
 
-### Run
+Alternatively, use GitHub's **Code → Download ZIP** option if cloning is unavailable.
 
-1. **Extract snow data:** paste `gee/Sentinel2_code.js` into the [GEE Code Editor](https://code.earthengine.google.com/), set `start` / `end`, run, and export the CSV from the Tasks tab. Repeat per altitude band and for MODIS.
-2. **Prepare the dataset:** merge snow, temperature and precipitation by week, split `week_start` into `year` and `week_of_year`, apply `StandardScaler`, add `target_snow_next_week` and the chronological `split` column.
-3. **Build sequences:**
-   ```bash
-   python src/create_sequences.py
-   ```
-4. **Train and evaluate:**
-   ```bash
-   python src/train_lstm2.py
-   ```
+### 2. Install dependencies
 
-## Results
+Create a virtual environment and install the libraries used by the scripts (TensorFlow, NumPy, pandas, scikit-learn, and Plotly). A pinned dependency file is not yet provided in this repository.
 
-- Sentinel-2 and MODIS weekly series agree on seasonal behaviour (winter maxima, summer minima).
-- Snow persistence increases with altitude: higher bands keep snow longer, lower bands melt earlier.
-- The LSTM reproduces the main seasonal structure across train, validation and test periods.
-- Test MAE: **TODO – add value and a prediction plot** (e.g. `docs/prediction_timeline.png`).
+### 3. Train and evaluate using existing arrays
 
-## Roadmap
+The repository includes pre-generated NumPy arrays (`X_train.npy`, `X_val.npy`, `X_test.npy`, and matching `y_*.npy` files). From the repository root, run:
 
-- [ ] Add Sentinel-1 SAR for snow detection under cloud cover
-- [ ] Add slope and aspect; evaluate by terrain
-- [ ] Forecast horizons of +3, +10 and +30 days
-- [ ] Compare ConvLSTM, UNet-3D, TimeSformer and generative models
-- [ ] Add RMSE, IoU, Dice and per-altitude evaluation
-- [ ] Interactive visualization with a 3D terrain snow overlay
+```bash
+python train_lstm.py
+```
 
-## Team
+This trains a model using the saved arrays, prints evaluation metrics, and writes interactive HTML plots. Results may differ between runs because random seeds and environment versions are not fully pinned.
 
-Nour el Saghir · Carla Youness · Reina Taher · Ali Mansour · Hassan Dakhlallah
+### 4. Regenerate sequences (optional)
+
+The source dataset is `weekly_snow_model_ready_with_target.csv`. Before running `create_sequences.py`, replace its existing machine-specific `file_path` with a valid path to that CSV in your environment. Then execute:
+
+```bash
+python create_sequences.py
+```
+
+This generates the NumPy training, validation, and test arrays. Run preprocessing scripts only after checking their input paths and required source files.
+
+## Evaluation and Visualizations
+
+The project evaluates forecasts using **mean absolute error (MAE)** and **root mean squared error (RMSE)** and includes a persistence-baseline comparison.
+
+Generated interactive artifacts available in the repository include:
+
+- [`loss_plot.html`](loss_plot.html) — training and validation loss curves
+- [`mae_plot.html`](mae_plot.html) — training and validation MAE curves
+- [`full_timeline_predictions.html`](full_timeline_predictions.html) — observed and predicted values over time
+- [`full_timeline_predictions_altitudes.html`](full_timeline_predictions_altitudes.html) — altitude-focused timeline
+- [`sequence_comparison.html`](sequence_comparison.html) — sequence comparison visualization
+
+**Performance reporting:** The exact final test metrics and comparison conditions should be taken from a verified run or saved experiment record. Numerical improvements are intentionally not asserted here until they are documented with their baseline, dataset split, and units.
+
+## Limitations and Future Work
+
+- Cloud contamination and irregular satellite coverage can affect snow estimates.
+- Weekly altitude-level forecasting is not the same as pixel-level snow segmentation or spatial map forecasting.
+- Some preprocessing scripts contain machine-specific paths and need environment-independent configuration.
+- Evaluation should be repeated with pinned dependencies and saved random seeds for reproducibility.
+- Future extensions could include additional snow-detection sources, terrain features, multi-horizon forecasts, and spatial deep-learning architectures.
+
+## Team and Supervision
+
+**Project team:** Nour El Saghir · Carla Youness · Reina Taher · Ali Mansour · Hassan Dakhlallah
 
 **Supervisors:** Dr. Laurent Drapeau · Dr. Youssef El Bakouny
 
-École Supérieure d'Ingénieurs de Beyrouth (ESIB), Université Saint-Joseph de Beyrouth
+**Institution:** École Supérieure d'Ingénieurs de Beyrouth (ESIB), Université Saint-Joseph de Beyrouth
 
-## License
-
-Distributed under the MIT License. See `LICENSE` for details.
+This repository hosts work developed collaboratively as part of an academic engineering project. Contributions should be attributed to the original team members.
 
 ## Acknowledgements
 
-Copernicus Sentinel-2, NASA MODIS, USGS SRTM, ECMWF ERA5, FAO GAUL and Google Earth Engine.
+Data and supporting platforms: Copernicus Sentinel-2, NASA MODIS, USGS SRTM, ECMWF ERA5, and Google Earth Engine.
+
+**Licensing:** No repository license is asserted here. Reuse permissions should be agreed with the project contributors before adding a license file.
