@@ -1,0 +1,170 @@
+/****************************************************
+ * SNOWFLOWS – SENTINEL-2 WEEKLY SNOW FRACTION
+ ****************************************************/
+
+// ------------------------------
+// PARAMETERS
+// ------------------------------
+var start = ee.Date('2021-10-01');
+var end   = ee.Date('2025-06-01');
+
+var country = ee.FeatureCollection('FAO/GAUL/2015/level0')
+  .filter(ee.Filter.eq('ADM0_NAME', 'Lebanon'));
+
+var useElevationMask = false;
+var minElevation = 1200;
+
+// ------------------------------
+// RESOURCES
+// ------------------------------
+var dem = ee.Image('USGS/SRTMGL1_003');
+var highRelief = dem.gte(minElevation);
+
+var analysisMask = ee.Image(
+  ee.Algorithms.If(useElevationMask, highRelief, ee.Image.constant(1))
+);
+
+var analysisGeom = country.geometry();
+
+// Total area
+var totalArea_km2 = ee.Number(
+  ee.Image.pixelArea()
+    .updateMask(analysisMask)
+    .reduceRegion({
+      reducer: ee.Reducer.sum(),
+      geometry: analysisGeom,
+      scale: 500,
+      maxPixels: 1e13
+    }).get('area')
+).divide(1e6);
+
+// ------------------------------
+// SENTINEL-2 COLLECTION
+// ------------------------------
+var s2 = ee.ImageCollection('COPERNICUS/S2_SR')
+  .filterDate(start, end)
+  .filterBounds(country)
+  .filter(ee.Filter.lt('CLOUDY_PIXEL_PERCENTAGE', 70));
+
+// ------------------------------
+// CLOUD MASK (using SCL)
+// ------------------------------
+function maskS2clouds(image) {
+  var scl = image.select('SCL');
+
+  // Keep good pixels only
+  var mask = scl.eq(4)  // vegetation
+    .or(scl.eq(5))      // bare soil
+    .or(scl.eq(6))      // water
+    .or(scl.eq(7))      // unclassified
+    .or(scl.eq(11));    // snow
+
+  return image.updateMask(mask)
+              .copyProperties(image, ['system:time_start']);
+}
+
+// ------------------------------
+// NDSI COMPUTATION
+// ------------------------------
+function toSnowFraction(image) {
+  var ndsi = image.normalizedDifference(['B3','B11']).rename('snowFrac');
+
+  // Keep only snow (threshold)
+  var snow = ndsi.gt(0.4).rename('snowFrac');
+
+  snow = snow.updateMask(analysisMask);
+
+  return snow.copyProperties(image, ['system:time_start']);
+}
+
+// Apply processing
+s2 = s2.map(maskS2clouds).map(toSnowFraction);
+
+// ------------------------------
+// WEEKLY AGGREGATION
+// ------------------------------
+var weeklyFeatures = ee.List.sequence(0, end.difference(start, 'week').subtract(1))
+.map(function(i) {
+
+  var ws = start.advance(i, 'week');
+  var we = ws.advance(1, 'week');
+
+  var weekCol = s2.filterDate(ws, we);
+
+  var hasAny = weekCol.size().gt(0);
+
+  var area_km2 = ee.Number(ee.Algorithms.If(
+    hasAny,
+    weekCol.mean()
+      .multiply(ee.Image.pixelArea())
+      .reduceRegion({
+        reducer: ee.Reducer.sum(),
+        geometry: analysisGeom,
+        scale: 500,
+        maxPixels: 1e13
+      }).get('snowFrac'),
+    0
+  ));
+
+  area_km2 = ee.Number(ee.Algorithms.If(area_km2, area_km2.divide(1e6), 0));
+
+  var pct = ee.Number(ee.Algorithms.If(
+    totalArea_km2.gt(0),
+    area_km2.divide(totalArea_km2).multiply(100),
+    0
+  ));
+
+  return ee.Feature(null, {
+    'week_start': ws.format('YYYY-MM-dd'),
+    'week_end'  : we.format('YYYY-MM-dd'),
+    'snow_km2'  : area_km2,
+    'snow_pct'  : pct
+  });
+});
+
+var weeklySnow = ee.FeatureCollection(weeklyFeatures);
+
+// ------------------------------
+// OUTPUT
+// ------------------------------
+print('Total analyzed area (km²):', totalArea_km2);
+print('Weekly snow (first 10):', weeklySnow.limit(10));
+
+// Map
+var best = weeklySnow.sort('snow_km2', false).first();
+
+ee.Number(weeklySnow.size()).evaluate(function(hasWeeks){
+  Map.centerObject(country, 8);
+  Map.addLayer(country, {color: 'yellow'}, 'Lebanon');
+
+  if (hasWeeks > 0) {
+    var bestStart = ee.Date(best.get('week_start'));
+    var bestEnd   = ee.Date(best.get('week_end'));
+
+    var bestImage = ee.ImageCollection(
+      s2.filterDate(bestStart, bestEnd)
+    ).mean();
+
+    Map.addLayer(bestImage.clip(country), 
+      {min: 0, max: 1, palette: ['000000','00A6FF','FFFFFF']}, 
+      'Snow');
+  }
+});
+
+// Chart
+var chart = ui.Chart.feature.byFeature(weeklySnow, 'week_start', ['snow_km2'])
+  .setChartType('LineChart')
+  .setOptions({
+    title: 'Sentinel-2 Weekly Snow (km²)',
+    hAxis: {title: 'Week'},
+    vAxis: {title: 'Snow km²'}
+  });
+
+print(chart);
+
+// Export
+Export.table.toDrive({
+  collection: weeklySnow,
+  description: 'Sentinel2_Weekly_Snow',
+  fileFormat: 'CSV'
+});
